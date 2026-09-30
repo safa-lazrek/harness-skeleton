@@ -1,0 +1,41 @@
+{
+  "scenario": {
+    "agents": [
+      {
+        "id": "...",
+        "type": "...",
+        "role": "...",
+        "prompts": [],
+        "actions": [],
+        "data": {
+          "input": [],
+          "output": []
+        },
+        "evaluate": []
+      }
+    ],
+
+    "communication_protocol": {
+      "type": "..."
+    },
+
+    "memory": {
+      "individual": {},
+      "shared": {}
+    },
+
+    "task_decomposition": {
+      "subtasks": [
+        { "id": "T1"},
+        { "id": ""},
+        { "id": "" }
+      ]
+    },
+
+    "evaluation_functions": {
+      "system_level": [
+        { }
+      ]
+    }
+  }
+}
