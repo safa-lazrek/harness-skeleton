@@ -4,23 +4,24 @@ format Trace défini dans trace_schema.py.
 """
 
 
-def success_rate(trace, expected_output: dict) -> bool:
-
-    """ Success Rate : Compare l'état final du système, reconstruit à partir de la
-    trace, aux valeurs attendues (issues de evaluation_functions.
-    system_level dans le schéma de scénario).
+def successrate (traces: list, expected_output: dict) -> float:
+    """Success Rate : proportion des exécutions, parmi plusieurs
+    lancements du même scénario, dont le résultat final correspond
+    aux valeurs attendues.
     """
-    if not trace.events:
-        return False
- 
-    etat_final_du_systeme = {}
-    for evenement in trace.events:
-        etat_final_du_systeme.update(evenement.output)
- 
-    return all(
-        etat_final_du_systeme.get(cle) == valeur
-        for cle, valeur in expected_output.items()
-    )
+    if not traces:
+        return 0.0
+
+    reussites = 0
+    for trace in traces:
+        etat_final = {}
+        for e in trace.events:
+            etat_final.update(e.output)
+
+        if all(etat_final.get(cle) == valeur for cle, valeur in expected_output.items()):
+            reussites += 1
+
+    return reussites / len(traces)
 
 def goal_condition_recall(trace, conditions: list) -> float:
 
