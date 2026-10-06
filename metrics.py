@@ -32,11 +32,10 @@ def goal_condition_recall(trace, conditions: list) -> float:
     satisfaites = sum(1 for cond in conditions if cond(trace))
     return satisfaites / len(conditions)
 
-
 def run_to_run_consistency(traces: list) -> float:
-    """Run-to-run Consistency : proportion des
-    exécutions (plusieurs Trace du MÊME scénario) qui aboutissent
-    au même résultat final.
+    """Run-to-run Consistency : proportion des exécutions (plusieurs
+    Trace du MÊME scénario) qui aboutissent au résultat final le plus
+    fréquent.
     """
     if len(traces) < 2:
         return 1.0
@@ -46,9 +45,15 @@ def run_to_run_consistency(traces: list) -> float:
         etat_final = {}
         for e in trace.events:
             etat_final.update(e.output)
-        resultats_finaux.append(etat_final)
+        resultats_finaux.append(str(sorted(etat_final.items())))
 
-    return resultats_finaux.count(resultats_finaux[0]) / len(traces)
+    occurrences = {}
+    for resultat in resultats_finaux:
+        occurrences[resultat] = occurrences.get(resultat, 0) + 1
+
+    plus_frequent = max(occurrences.values())
+    return plus_frequent / len(traces)
+
 
 def latency(trace) -> float:
     """Latency : temps total de l'exécution,
