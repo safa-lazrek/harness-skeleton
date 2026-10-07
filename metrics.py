@@ -23,15 +23,22 @@ def successrate (traces: list, expected_output: dict) -> float:
 
     return reussites / len(traces)
 
-def goal_condition_recall(trace, conditions: list) -> float:
-
-    """Goal Condition Recall : Proportion des conditions nécessaires à l'accomplissement de
-    l'objectif qui sont satisfaites.
+def goal_condition_recall(traces: list, conditions: list) -> float:
+    """Goal Condition Recall : moyenne, sur plusieurs exécutions, de
+    la proportion de conditions nécessaires qui sont satisfaites
+    dans chaque exécution.
     """
     if not conditions:
         return 1.0
-    satisfaites = sum(1 for cond in conditions if cond(trace))
-    return satisfaites / len(conditions)
+    if not traces:
+        return 0.0
+
+    scores_par_execution = []
+    for trace in traces:
+        satisfaites = sum(1 for cond in conditions if cond(trace))
+        scores_par_execution.append(satisfaites / len(conditions))
+
+    return sum(scores_par_execution) / len(scores_par_execution)
 
 def run_to_run_consistency(traces: list) -> float:
     """Run-to-run Consistency : proportion des exécutions (plusieurs
