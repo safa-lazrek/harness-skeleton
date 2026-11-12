@@ -1,23 +1,14 @@
-import sys
-import time
-sys.path.append(".")
-from trace_schema import Trace, TraceEvent
+from langfuse_config import langfuse
+from langfuse import observe
 
 
-def ingest(app, initial_state: dict, run_id: str) -> Trace:
-    trace = Trace(run_id=run_id)
-    debut = time.time()
-
-    for step_number, step in enumerate(app.stream(initial_state), start=1):
-        maintenant = time.time()
-        for node_name, output in step.items():
-            trace.events.append(
-                TraceEvent(
-                    step_number=step_number,
-                    node_name=node_name,
-                    output=output,
-                    timestamp=maintenant - debut,
-                )
-            )
-
-    return trace
+@observe(capture_output=False)
+def ingest(app, initial_state: dict, run_id: str):
+    """Exécute un système multi-agent et observe son exécution via
+    Langfuse. Renvoie l'identifiant de la trace (pour la consulter
+    sur Langfuse) et le résultat final de l'exécution."""
+    resultat = app.invoke(initial_state)
+    langfuse.update_current_span(output=resultat)
+    langfuse.flush()
+    trace_id = langfuse.get_current_trace_id()
+    return trace_id, resultat

@@ -1,102 +1,66 @@
-"""
-Fonctions de calcul des métriques d'évaluation, opérant sur le
-format Trace défini dans trace_schema.py.
-"""
+from math import comb  # comb(a, b) = nombre de façons de choisir b éléments parmi a
 
+def compute_success_rate(results, en_pourcentage=False):
+    # --- Bloc 1 : compter n_a, le nombre de tâches réussies ---
+    n_a = sum(1 for r in results if r.success)
 
-def successrate (traces: list, expected_output: dict) -> float:
-    """Success Rate : proportion des exécutions, parmi plusieurs
-    lancements du même scénario, dont le résultat final correspond
-    aux valeurs attendues.
+    # --- Bloc 2 : compter n, le nombre total de tâches ---
+    n = len(results)
+
+    # --- Bloc 3 : TSR = n_a / n ---
+    success_rate = n_a / n
+
+    # --- Bloc 4 : choisir le format ---
+    if en_pourcentage:
+        return success_rate * 100
+    return success_rate
+
+def compute_pass_hat_k(results):
     """
-    if not traces:
-        return 0.0
+    Calcule pass^k (cohérence entre exécutions), même méthode que tau-bench (run.py, display_metrics).
+    Formule (Yao et al., 2024, section 3) : pass^k = moyenne sur les tâches de C(c, k) / C(n, k)
 
-    reussites = 0
-    for trace in traces:
-        etat_final = {}
-        for e in trace.events:
-            etat_final.update(e.output)
+    results : liste des essais. Chaque essai a :
+        - task_id : identifiant de la tâche
+        - trial   : numéro de l'essai (0, 1, 2...)
+        - reward  : 1.0 si réussi, 0.0 si raté
 
-        if all(etat_final.get(cle) == valeur for cle, valeur in expected_output.items()):
-            reussites += 1
-
-    return reussites / len(traces)
-
-def goal_condition_recall(traces: list, conditions: list) -> float:
-    """Goal Condition Recall : moyenne, sur plusieurs exécutions, de
-    la proportion de conditions nécessaires qui sont satisfaites
-    dans chaque exécution.
+    Renvoie : un dictionnaire {k: score}, par exemple {1: 0.667, 2: 0.444, 3: 0.333}
     """
-    if not conditions:
-        return 1.0
-    if not traces:
-        return 0.0
 
-    scores_par_execution = []
-    for trace in traces:
-        satisfaites = sum(1 for cond in conditions if cond(trace))
-        scores_par_execution.append(satisfaites / len(conditions))
+    # --- Bloc 1 : savoir si un essai est réussi ---
+    # Renvoie True si reward vaut 1.
+    # La marge 1e-6 évite les erreurs d'arrondi (0.9999999 compte comme 1).
+    def is_successful(reward):
+        return (1 - 1e-6) <= reward <= (1 + 1e-6)
 
-    return sum(scores_par_execution) / len(scores_par_execution)
+    # --- Bloc 2 : trouver n, le nombre d'essais par tâche ---
+    # On récupère tous les numéros d'essai, on garde chaque numéro une seule fois (set),
+    # puis on les compte. Exemple : essais 0, 1, 2 -> n = 3.
+    num_trials = len(set([r.trial for r in results]))
 
-def run_to_run_consistency(traces: list) -> float:
-    """Run-to-run Consistency : proportion des exécutions (plusieurs
-    Trace du MÊME scénario) qui aboutissent au résultat final le plus
-    fréquent.
-    """
-    if len(traces) < 2:
-        return 1.0
+    # --- Bloc 3 : compter c, le nombre de réussites de chaque tâche ---
+    # Résultat : un dictionnaire {task_id: nombre de réussites}, par exemple {1: 3, 2: 2, 3: 1}.
+    c_per_task_id = {}
+    for result in results:
+        if result.task_id not in c_per_task_id:
+            # Première fois qu'on voit cette tâche : on crée son compteur (1 si réussi, 0 sinon)
+            c_per_task_id[result.task_id] = 1 if is_successful(result.reward) else 0
+        else:
+            # Tâche déjà vue : on ajoute 1 si l'essai est réussi, 0 sinon
+            c_per_task_id[result.task_id] += 1 if is_successful(result.reward) else 0
 
-    resultats_finaux = []
-    for trace in traces:
-        etat_final = {}
-        for e in trace.events:
-            etat_final.update(e.output)
-        resultats_finaux.append(str(sorted(etat_final.items())))
+    # --- Bloc 4 : calculer pass^k pour chaque k de 1 à n ---
+    pass_hat_ks = {}
+    for k in range(1, num_trials + 1):
+        sum_task_pass_hat_k = 0  # total des scores des tâches, remis à zéro pour chaque k
 
-    occurrences = {}
-    for resultat in resultats_finaux:
-        occurrences[resultat] = occurrences.get(resultat, 0) + 1
+        for c in c_per_task_id.values():
+            # Formule pour UNE tâche : C(c, k) / C(n, k)
+            # = probabilité que k essais tirés au hasard parmi les n soient tous réussis
+            sum_task_pass_hat_k += comb(c, k) / comb(num_trials, k)
 
-    plus_frequent = max(occurrences.values())
-    return plus_frequent / len(traces)
+        # Moyenne sur toutes les tâches = pass^k
+        pass_hat_ks[k] = sum_task_pass_hat_k / len(c_per_task_id)
 
-
-def latency(trace) -> float:
-    """Latency : temps total de l'exécution,
-    en secondes."""
-    if not trace.events:
-        return 0.0
-    return trace.events[-1].timestamp
-
-def cost(trace) -> dict:
-    """Cost : Somme des tokens consommés au cours de l'exécution, à partir
-    des métadonnées d'usage exposées par les agents (usage_metadata).
-    """
-    total_tokens = 0
-    for e in trace.events:
-        usage = e.output.get("usage_metadata")
-        if usage and "total_tokens" in usage:
-            total_tokens += usage["total_tokens"]
-
-    return {"total_tokens": total_tokens}
-
-def redundancy(trace) -> float:
-    """Redundancy :la proportion d'événements dont la sortie est identique
-    à une sortie déjà produite par le même agent plus tôt dans la
-    même exécution — une répétition inutile.
-    """
-    if not trace.events:
-        return 0.0
-
-    deja_vus = {}
-    redondants = 0
-
-    for e in trace.events:
-        historique = deja_vus.setdefault(e.node_name, [])
-        if e.output in historique:
-            redondants += 1
-        historique.append(e.output)
-
-    return redondants / len(trace.events)
+    return pass_hat_ks
