@@ -1,66 +1,126 @@
 from math import comb  # comb(a, b) = nombre de façons de choisir b éléments parmi a
+import json
+from ingestion import ingest
 
-def compute_success_rate(results, en_pourcentage=False):
-    # --- Bloc 1 : compter n_a, le nombre de tâches réussies ---
-    n_a = sum(1 for r in results if r.success)
+# ---------------------------------------------------------------
+# SUCCESS RATE 
+# ---------------------------------------------------------------
+def compute_success_rate(resultats):
+    n_a = sum(resultats)   # nombre de tâches réussies
+    n = len(resultats)     # nombre total de tâches
+    return n_a / n if n else 0.0
+def run_success_rate(app, chemin_json="scenario.json"):
+    scenario = json.load(open(chemin_json))["scenario"]
 
-    # --- Bloc 2 : compter n, le nombre total de tâches ---
-    n = len(results)
+    resultats = []
+    for agent in scenario["agents"]:
+        for p in agent.get("prompts", []):
+            # 1. envoyer la question au système
+            trace_id, reponse = ingest(app, {"input": p["prompt"]}, agent["id"])
 
-    # --- Bloc 3 : TSR = n_a / n ---
-    success_rate = n_a / n
+            # 2. la bonne réponse écrite dans le JSON
+            bonne_reponse = p.get("answer", p.get("expected-value"))
 
-    # --- Bloc 4 : choisir le format ---
-    if en_pourcentage:
-        return success_rate * 100
-    return success_rate
+            # 3. corriger : 1 ou 0
+            if str(bonne_reponse) in str(reponse):
+                resultats.append(1)
+            else:
+                resultats.append(0)
 
-def compute_pass_hat_k(results):
-    """
-    Calcule pass^k (cohérence entre exécutions), même méthode que tau-bench (run.py, display_metrics).
-    Formule (Yao et al., 2024, section 3) : pass^k = moyenne sur les tâches de C(c, k) / C(n, k)
+    # 4. calculer
+    return compute_success_rate(resultats)
 
-    results : liste des essais. Chaque essai a :
-        - task_id : identifiant de la tâche
-        - trial   : numéro de l'essai (0, 1, 2...)
-        - reward  : 1.0 si réussi, 0.0 si raté
 
-    Renvoie : un dictionnaire {k: score}, par exemple {1: 0.667, 2: 0.444, 3: 0.333}
-    """
+# ---------------------------------------------------------------
+# CONSISTENCY : lancer les essais (pour pass^k)
+# ---------------------------------------------------------------
+def lancer_essais(app, chemin_json="scenario.json", num_trials=4):
+    scenario = json.load(open(chemin_json))["scenario"]
+
+    results = []
+    for agent in scenario["agents"]:
+        for i, p in enumerate(agent.get("prompts", [])):
+            task_id = f"{agent['id']}-{i}"
+            bonne_reponse = p.get("answer", p.get("expected-value"))
+
+            for trial in range(num_trials):
+                # TODO : vider la mémoire des agents ici (avant chaque essai)
+                trace_id, reponse = ingest(app, {"input": p["prompt"]}, f"{task_id}-t{trial}")
+                reussi = bonne_reponse is not None and str(bonne_reponse) in str(reponse)
+                results.append({"task_id": task_id, "trial": trial,
+                                "reward": 1.0 if reussi else 0.0})
+    return results
+
+
+# ---------------------------------------------------------------
+# CONSISTENCY : pass^k  (Yao et al., 2024, section 3)
+# ---------------------------------------------------------------
+def compute_pass_hat_k(results):                                                                                                  
+
+
+
+
 
     # --- Bloc 1 : savoir si un essai est réussi ---
-    # Renvoie True si reward vaut 1.
-    # La marge 1e-6 évite les erreurs d'arrondi (0.9999999 compte comme 1).
     def is_successful(reward):
         return (1 - 1e-6) <= reward <= (1 + 1e-6)
 
-    # --- Bloc 2 : trouver n, le nombre d'essais par tâche ---
-    # On récupère tous les numéros d'essai, on garde chaque numéro une seule fois (set),
-    # puis on les compte. Exemple : essais 0, 1, 2 -> n = 3.
-    num_trials = len(set([r.trial for r in results]))
+    # --- Bloc 2 : num_trials, le nombre d'essais par tâche ---
+    num_trials = len(set([r["trial"] for r in results]))
 
-    # --- Bloc 3 : compter c, le nombre de réussites de chaque tâche ---
-    # Résultat : un dictionnaire {task_id: nombre de réussites}, par exemple {1: 3, 2: 2, 3: 1}.
+    # --- Bloc 3 : c, le nombre de réussites de chaque tâche ---
     c_per_task_id = {}
     for result in results:
-        if result.task_id not in c_per_task_id:
-            # Première fois qu'on voit cette tâche : on crée son compteur (1 si réussi, 0 sinon)
-            c_per_task_id[result.task_id] = 1 if is_successful(result.reward) else 0
+        if result["task_id"] not in c_per_task_id:
+            c_per_task_id[result["task_id"]] = 1 if is_successful(result["reward"]) else 0
         else:
-            # Tâche déjà vue : on ajoute 1 si l'essai est réussi, 0 sinon
-            c_per_task_id[result.task_id] += 1 if is_successful(result.reward) else 0
+            c_per_task_id[result["task_id"]] += 1 if is_successful(result["reward"]) else 0
 
-    # --- Bloc 4 : calculer pass^k pour chaque k de 1 à n ---
+    # --- Bloc 4 : pass^k pour chaque k de 1 à num_trials ---
     pass_hat_ks = {}
     for k in range(1, num_trials + 1):
-        sum_task_pass_hat_k = 0  # total des scores des tâches, remis à zéro pour chaque k
-
+        sum_task_pass_hat_k = 0
         for c in c_per_task_id.values():
-            # Formule pour UNE tâche : C(c, k) / C(n, k)
-            # = probabilité que k essais tirés au hasard parmi les n soient tous réussis
             sum_task_pass_hat_k += comb(c, k) / comb(num_trials, k)
-
-        # Moyenne sur toutes les tâches = pass^k
         pass_hat_ks[k] = sum_task_pass_hat_k / len(c_per_task_id)
 
     return pass_hat_ks
+
+
+
+# ---------------------------------------------------------------
+# GOAL CONDITION RECALL (GCR)
+# Formule : GCR = 1 - |S_GT \ S_E| / |S_GT|
+#   S_GT = conditions attendues (les sous-tâches du JSON)
+#   S_E  = conditions atteintes (les sous-tâches terminées par le système)
+# Sources : ProgPrompt (Singh et al., 2023), section C "Evaluation Metrics"
+#           SMART-LLM (Kannan et al., 2023), section D "Evaluation Metrics"
+# ---------------------------------------------------------------
+def compute_gcr(attendues, atteintes):
+    S_GT = set(attendues)                       # conditions attendues
+    S_E = set(atteintes)                        # conditions atteintes
+    non_atteintes = S_GT - S_E                  # attendues mais pas atteintes
+    return 1 - len(non_atteintes) / len(S_GT) if S_GT else 0.0
+
+
+def run_gcr(app, chemin_json="scenario.json"):
+    scenario = json.load(open(chemin_json))["scenario"]
+
+    # 1. les conditions attendues : les sous-tâches du JSON (on ignore les id vides)
+    attendues = [s["id"] for s in scenario["task_decomposition"]["subtasks"] if s.get("id")]
+
+    scores = []
+    for agent in scenario["agents"]:
+        for p in agent.get("prompts", []):
+            # 2. envoyer la question au système
+            trace_id, reponse = ingest(app, {"input": p["prompt"]}, agent["id"])
+
+            # 3. les conditions atteintes : les sous-tâches terminées par le système
+            # TODO : à adapter selon où le système indique ses sous-tâches terminées
+            atteintes = reponse.get("subtasks_done", []) if isinstance(reponse, dict) else []
+
+            # 4. GCR de cette question
+            scores.append(compute_gcr(attendues, atteintes))
+
+    # 5. moyenne sur toutes les questions
+    return sum(scores) / len(scores) if scores else 0.0
